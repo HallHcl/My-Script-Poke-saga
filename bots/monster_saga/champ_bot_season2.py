@@ -10,7 +10,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 # ============================================================
-# CONFIG
+# CONFIG (Season 2 Pattern: 1-Char Wave 1 Manual, 2-Char Wave 2, 3-Char Wave 3)
 # ============================================================
 
 ADB = r"C:\Program Files\Netease\MuMuPlayer\nx_main\adb.exe"
@@ -20,19 +20,23 @@ DEVICE = "127.0.0.1:5559"
 MATCH = (756, 662)
 
 CHARACTERS = [
-    (272, 654),
-    (382, 654),
-    (492, 654),
+    (205, 670),  # Character 1 (Groudon)
+    (305, 670),  # Character 2 (Charizard X)
+    (405, 670),  # Character 3 (Gengar)
 ]
 
-# Wave 1/2 Team Selection Next button
-NEXT = (941, 492)
+# Wave 1/2 Team Selection Next button (Blue hexagon)
+NEXT = (940, 490)
 
 # Wave 3 Team Selection Battle start button
-BATTLE = (941, 492)
+BATTLE = (940, 490)
 
-# Battle Auto button (center: 56, 160; bbox approx [7, 111, 105, 209])
-AUTO = (56, 160)
+# Battle Auto button (center: 45, 240)
+AUTO = (45, 240)
+
+# Wave 1 Manual Skills: Red skill first, then Green skill
+SKILL_RED = (708, 627)    # Skill in Red Box (Meteor / Fire)
+SKILL_GREEN = (956, 625)  # Skill in Green Box (Claws / Slash)
 
 # Wave Result / Return button (center: 635, 633; bbox approx [564, 603, 707, 663])
 RETURN = (635, 633)
@@ -42,9 +46,9 @@ BATTLE_LOADING_TIMEOUT = 60
 BATTLE_TIMEOUT = 330         # 5 min 30 sec per wave (game timer: 5 min)
 MATCH_MAX_TIMEOUT = 960      # 16 min emergency match circuit breaker (3 waves * 5 min + buffer)
 MIN_BATTLE_TIME = 15
-BATTLE_CHECK_INTERVAL = 3.5  # Check interval during battle (resource friendly: 3.5s)
+BATTLE_CHECK_INTERVAL = 1.5  # Check interval during battle (Wave 1 manual responsiveness)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 MATCH_TEMPLATE = os.path.join(BASE_DIR, "templates", "match_button.png")
 RETURN_TEMPLATE = os.path.join(BASE_DIR, "templates", "return_button.png")
 NEXT_WAVE_TEMPLATE = os.path.join(BASE_DIR, "templates", "next_wave_button.png")
@@ -52,7 +56,7 @@ SCREENSHOT_DIR = os.path.join(BASE_DIR, "screenshots")
 
 MATCH_THRESHOLD = 0.90
 BUTTON_TYPE_THRESHOLD = 0.88
-AUTO_YELLOW_THRESHOLD = 0.08
+AUTO_YELLOW_THRESHOLD = 0.15
 AUTO_BLUE_THRESHOLD = 0.25
 RESULT_THRESHOLD = 0.25
 REQUIRED_CONSECUTIVE_FRAMES = 2
@@ -86,7 +90,6 @@ def ensure_device_connected(timeout=5):
         except Exception:
             return ""
 
-    # Check initial state
     state = get_state()
     if state == "device":
         print(f"    Device {DEVICE} is already connected.")
@@ -100,14 +103,11 @@ def ensure_device_connected(timeout=5):
             text=True,
             timeout=timeout
         )
-        print(f"    Connect response: {connect_res.stdout.strip()}")
+        print(f"    connect output: {connect_res.stdout.strip()}")
     except Exception as e:
-        print(f"    Connect error: {e}")
+        print(f"    Connection attempt failed: {e}")
         return False
 
-    time.sleep(1)
-
-    # Re-check state after connect
     state = get_state()
     if state == "device":
         print(f"    Successfully connected to {DEVICE}.")
@@ -148,14 +148,10 @@ def screenshot():
         cv2.IMREAD_COLOR
     )
 
-    if img is None:
-        raise RuntimeError("Screenshot decode failed")
-
     return img
 
 
 def tap(x, y):
-    print(f"    TAP ({x},{y})")
     adb(
         "shell",
         "input",
@@ -165,8 +161,23 @@ def tap(x, y):
     )
 
 
+def save_debug_screenshot(prefix="debug"):
+    try:
+        os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+        img = screenshot()
+        if img is not None:
+            filename = os.path.join(
+                SCREENSHOT_DIR,
+                f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{prefix}.png"
+            )
+            cv2.imwrite(filename, img)
+            print(f"    Debug screenshot saved: {filename}")
+    except Exception as e:
+        print(f"    Failed to save debug screenshot: {e}")
+
+
 # ============================================================
-# TEMPLATE MATCHING
+# TEMPLATE MATCHING & VISION
 # ============================================================
 
 match_template = cv2.imread(MATCH_TEMPLATE)
@@ -233,7 +244,7 @@ def screen_difference(img1, img2):
     return float(np.mean(diff))
 
 
-def get_hsv_region(img, x, y, radius_x=45, radius_y=45):
+def get_hsv_region(img, x, y, radius_x=35, radius_y=35):
     x1 = max(0, x - radius_x)
     y1 = max(0, y - radius_y)
     x2 = min(img.shape[1], x + radius_x)
@@ -248,7 +259,7 @@ def get_hsv_region(img, x, y, radius_x=45, radius_y=45):
 
 def auto_blue_score(img, x=AUTO[0], y=AUTO[1]):
     """Detects blue/cyan color ratio around AUTO button (indicates AUTO OFF)."""
-    hsv = get_hsv_region(img, x, y, 45, 45)
+    hsv = get_hsv_region(img, x, y, 35, 35)
     if hsv is None:
         return 0.0
 
@@ -258,90 +269,100 @@ def auto_blue_score(img, x=AUTO[0], y=AUTO[1]):
     return float(np.mean(mask > 0))
 
 
-def yellow_score(img, x=AUTO[0], y=AUTO[1]):
-    """Detects yellow/gold color ratio around AUTO button (indicates AUTO ON)."""
-    hsv = get_hsv_region(img, x, y, 45, 45)
+def auto_yellow_score(img, x=AUTO[0], y=AUTO[1]):
+    """Detects gold/yellow color ratio around AUTO button (indicates AUTO ON)."""
+    hsv = get_hsv_region(img, x, y, 35, 35)
     if hsv is None:
         return 0.0
 
-    lower = np.array([10, 70, 80])
-    upper = np.array([45, 255, 255])
+    lower = np.array([15, 80, 80])
+    upper = np.array([35, 255, 255])
+    mask = cv2.inRange(hsv, lower, upper)
+    return float(np.mean(mask > 0))
+
+
+def result_button_score(img):
+    """
+    Detects the presence of the golden-orange Result Button at (635, 633).
+    Returns ratio of pixels in the gold/orange color range.
+    """
+    hsv = get_hsv_region(img, RETURN[0], RETURN[1], 45, 25)
+    if hsv is None:
+        return 0.0
+
+    lower = np.array([10, 100, 100])
+    upper = np.array([30, 255, 255])
     mask = cv2.inRange(hsv, lower, upper)
     return float(np.mean(mask > 0))
 
 
 def detect_battle_screen(img):
     """
-    Detects presence of the AUTO button in Battle screen.
-    When Battle first appears: AUTO is OFF and the button is BLUE/CYAN.
-    After clicking AUTO: the button becomes YELLOW/GOLD.
-    Therefore, Battle detection detects whether the AUTO button exists
-    in the region around (56, 160), regardless of whether it is OFF or ON.
+    Determines if the game is currently inside the battle screen.
+    Returns: (is_battle: bool, score: float, blue_score: float, yellow_score: float)
     """
-    blue = auto_blue_score(img, AUTO[0], AUTO[1])
-    yellow = yellow_score(img, AUTO[0], AUTO[1])
-
-    # Presence is confirmed if blue/cyan (OFF) or yellow (ON) button is present
-    presence_score = max(blue, yellow)
-    is_detected = (blue >= AUTO_BLUE_THRESHOLD) or (yellow >= AUTO_YELLOW_THRESHOLD)
-
-    return is_detected, presence_score, blue, yellow
-
-
-def result_button_score(img):
-    """
-    Detects gold/orange Return/Result button on the Result screen.
-    Checks primary Result dialog / Summary button region around RETURN (635, 633).
-    """
-    hsv_center = get_hsv_region(img, RETURN[0], RETURN[1], 65, 45)
-    if hsv_center is None:
-        return 0.0
-    mask_center = cv2.inRange(hsv_center, np.array([5, 60, 80]), np.array([45, 255, 255]))
-    return float(np.mean(mask_center > 0))
+    blue = auto_blue_score(img)
+    yellow = auto_yellow_score(img)
+    score = max(blue, yellow)
+    threshold = AUTO_YELLOW_THRESHOLD if yellow > blue else AUTO_BLUE_THRESHOLD
+    is_battle = score >= threshold
+    return is_battle, score, blue, yellow
 
 
 # ============================================================
-# STATE 1: MATCH BUTTON (LOBBY)
+# STATE 1: LOBBY & MATCH START
 # ============================================================
 
-def wait_for_match_button(timeout=30):
+def wait_for_lobby():
     print()
-    print("[MATCH_BUTTON]")
-    print("    Waiting for Match button...")
+    print("[LOBBY]")
+    print("    Checking if on result screen...")
 
     start = time.time()
-    while time.time() - start < timeout:
+    while time.time() - start < 15:
         img = screenshot()
-        confidence, location = detect_match_button(img)
-        print(f"    Confidence: {confidence:.4f}")
+        match_conf, _ = detect_match_button(img)
 
-        if confidence >= MATCH_THRESHOLD:
-            h, w = match_template.shape[:2]
-            center_x = location[0] + w // 2
-            center_y = location[1] + h // 2
-            print(f"    Detected at ({center_x},{center_y})")
-            return center_x, center_y
+        if match_conf >= MATCH_THRESHOLD:
+            print("    Lobby confirmed (Match button ready).")
+            return True
 
-        # Auto-recovery: If screen is still on Result / Summary screen ("กลับ" button)
         ret_conf, _ = detect_return_button(img)
-        if ret_conf >= BUTTON_TYPE_THRESHOLD or result_button_score(img) >= RESULT_THRESHOLD:
-            print(f"    [RECOVERY] Result screen detected (conf={ret_conf:.3f}) -> Tapping 'กลับ' (635, 633)...")
+        btn_score = result_button_score(img)
+
+        if ret_conf >= BUTTON_TYPE_THRESHOLD or btn_score >= RESULT_THRESHOLD:
+            print(f"    Stuck on result screen (conf={ret_conf:.3f}, color={btn_score:.3f}) -> Tapping 'กลับ' (635, 633)...")
             tap(RETURN[0], RETURN[1])
             time.sleep(2.0)
             continue
 
-        time.sleep(1)
+        time.sleep(1.0)
 
-    return None
+    print("    Waiting for MATCH button in Lobby...")
+    while True:
+        img = screenshot()
+        confidence, location = detect_match_button(img)
+
+        if confidence >= MATCH_THRESHOLD:
+            print(f"    MATCH button detected (confidence={confidence:.4f})")
+            return True
+
+        ret_conf, _ = detect_return_button(img)
+        btn_score = result_button_score(img)
+        if ret_conf >= BUTTON_TYPE_THRESHOLD or btn_score >= RESULT_THRESHOLD:
+            print(f"    Result button still visible -> Tapping 'กลับ' (635, 633)...")
+            tap(RETURN[0], RETURN[1])
+            time.sleep(2.0)
+
+        time.sleep(1)
 
 
 def start_match():
-    result = wait_for_match_button()
-    if result is None:
-        print("ERROR: MATCH_BUTTON not detected")
+    if not wait_for_lobby():
         return False
 
-    tap(*result)
+    print("    Clicking MATCH...")
+    tap(MATCH[0], MATCH[1])
     time.sleep(1)
     return True
 
@@ -365,8 +386,7 @@ def wait_for_match_result():
 
         if diff > 8:
             print(f"    Screen changed (diff={diff:.2f})")
-            # Give game time to render
-            time.sleep(1)
+            time.sleep(0.6)
             return True
 
         if elapsed > 0 and elapsed % 10 == 0:
@@ -381,44 +401,40 @@ def wait_for_match_result():
 
 
 # ============================================================
-# STATE 3: TEAM SELECTION (WAVES 1, 2, 3)
+# STATE 3: TEAM SELECTION (SEASON 2: 1-CHAR, 2-CHAR, 3-CHAR)
 # ============================================================
 
 def select_team(wave):
     """
-    Selects 3 characters for the specified wave.
-    If wave < 3: taps NEXT to advance to the next wave team selection.
-    If wave == 3: finishes character selection (BATTLE is tapped in run_bot).
+    Season 2 Team Selection (High-Speed Turbo):
+    - Wave 1: 1 character (Character 1) -> tap NEXT
+    - Wave 2: 2 characters (Characters 1, 2) -> tap NEXT
+    - Wave 3: 3 characters (Characters 1, 2, 3) -> finishes selection (BATTLE tapped in run_bot)
     """
     print()
     print("=" * 60)
-    print(f"TEAM SELECTION - WAVE {wave}")
+    print(f"TEAM SELECTION - WAVE {wave} (Season 2 Pattern)")
     print("=" * 60)
 
-    # 1. Select character 1
-    print("    Selecting character 1")
-    tap(CHARACTERS[0][0], CHARACTERS[0][1])
-    time.sleep(0.3)
+    num_chars = wave  # Wave 1 = 1 char, Wave 2 = 2 chars, Wave 3 = 3 chars
+    print(f"    [Fast Selection] Selecting {num_chars} character(s) for Wave {wave}...")
 
-    # 2. Select character 2
-    print("    Selecting character 2")
-    tap(CHARACTERS[1][0], CHARACTERS[1][1])
-    time.sleep(0.3)
+    for i in range(num_chars):
+        char_x, char_y = CHARACTERS[i]
+        print(f"    Selecting character {i + 1} at ({char_x}, {char_y})")
+        tap(char_x, char_y)
+        time.sleep(0.12)
 
-    # 3. Select character 3
-    print("    Selecting character 3")
-    tap(CHARACTERS[2][0], CHARACTERS[2][1])
-    time.sleep(0.5)
+    time.sleep(0.15)
 
-    # Advance to next wave team selection
     if wave < 3:
-        print("    Clicking NEXT...")
+        print("    Clicking NEXT (940, 490)...")
         tap(NEXT[0], NEXT[1])
-        time.sleep(1.5)
+        time.sleep(0.65)
 
 
 # ============================================================
-# STATE 4: UNIFIED BATTLE LOOP
+# STATE 4: UNIFIED BATTLE LOOP (SEASON 2: WAVE 1 MANUAL, WAVE 2-3 AUTO)
 # ============================================================
 
 def return_to_lobby(timeout=30):
@@ -454,17 +470,20 @@ def return_to_lobby(timeout=30):
 
 def run_battle_loop(match_start_time):
     """
-    Unified Battle Loop:
-    1. Waits for initial Battle Scene to load after team selection.
-    2. Continuously monitors the battle every BATTLE_CHECK_INTERVAL (3.5s):
-       - If AUTO is Blue (new wave started or auto off) -> Taps AUTO to turn ON.
-       - If 'กลับ' button appears (match finished) -> Taps 'กลับ' and returns to Lobby.
-       - Ignores 'ต่อไป' between waves (game auto-advances in 5s).
-    3. Handles 16-minute emergency watchdog circuit breaker.
+    Season 2 Unified Battle Loop:
+    - Wave 1: Manual combat. DO NOT press AUTO.
+              Repeatedly taps skill buttons (Ult -> Skill 3 -> Skill 2 -> Normal).
+              If Auto is detected ON, forcibly turns it OFF.
+    - Wave Transition: When 'ต่อไป' or intermediate result countdown appears,
+                       increments wave counter (Wave 1 -> Wave 2 -> Wave 3).
+    - Wave 2 & 3: AUTO combat allowed.
+                  Taps AUTO (55, 255) to turn ON whenever it is blue (OFF).
+    - Final Result: Detects 'กลับ' (635, 633) for 2 consecutive frames -> exits to Lobby.
+    - 16-Minute emergency watchdog protection.
     """
     print()
     print("=" * 60)
-    print("[BATTLE PHASE - UNIFIED LOOP]")
+    print("[BATTLE PHASE - SEASON 2 LOOP]")
     print("=" * 60)
     print("    Waiting for Battle Scene to load...")
 
@@ -475,7 +494,7 @@ def run_battle_loop(match_start_time):
         img = screenshot()
         detected, score, blue, yellow = detect_battle_screen(img)
         if detected:
-            print("    Battle scene loaded! Monitoring battle...")
+            print(f"    Battle scene loaded! (blue={blue:.3f}, yellow={yellow:.3f})")
             time.sleep(1.5)
             battle_loaded = True
             break
@@ -486,9 +505,12 @@ def run_battle_loop(match_start_time):
         save_debug_screenshot("battle_loading_failed")
         return False
 
+    current_wave = 1
     last_printed = -1
     last_auto_tap = 0
     consecutive_return_count = 0
+
+    print(f"\n    >>> Starting Wave {current_wave} (Manual Combat - No Auto) <<<")
 
     while True:
         # 1. Emergency Watchdog (16 minutes max per whole match)
@@ -510,79 +532,91 @@ def run_battle_loop(match_start_time):
             print(f"    Lobby detected (Match conf={match_conf:.4f}) -> Match completed!")
             return True
 
-        # 3. Check for Match Finish ('กลับ' button)
+        # 3. Check for Final Match Finish ('กลับ' button)
         ret_conf, _ = detect_return_button(img)
         color_score = result_button_score(img)
 
-        # Must have 'กลับ' template match AND golden button color
         if ret_conf >= BUTTON_TYPE_THRESHOLD and color_score >= RESULT_THRESHOLD:
             consecutive_return_count += 1
             print(f"    'กลับ' button detected (conf={ret_conf:.3f}, color={color_score:.3f} | count={consecutive_return_count}/{REQUIRED_CONSECUTIVE_FRAMES})")
             if consecutive_return_count >= REQUIRED_CONSECUTIVE_FRAMES:
-                print()
-                print("=" * 60)
-                print("[MATCH FINISHED]")
-                print("=" * 60)
+                print("    Final Match Result Confirmed!")
                 return return_to_lobby()
+            time.sleep(0.5)
+            continue
         else:
             consecutive_return_count = 0
 
-        # 4. Check AUTO state (Blue = OFF -> Tap to enable)
-        blue_val = auto_blue_score(img, AUTO[0], AUTO[1])
-        yellow_val = yellow_score(img, AUTO[0], AUTO[1])
+        # 4. Check for Next Wave button (intermediate wave victory)
+        next_conf, _ = detect_next_wave_button(img)
+        has_countdown = has_countdown_text_below_button(img)
 
-        if blue_val >= AUTO_BLUE_THRESHOLD and yellow_val < AUTO_YELLOW_THRESHOLD:
-            if time.time() - last_auto_tap > 4.0:
-                print(f"    [AUTO OFF (Blue={blue_val:.3f})] Tapping AUTO (56, 160) to enable...")
-                tap(AUTO[0], AUTO[1])
-                last_auto_tap = time.time()
-                time.sleep(1.0)
+        if next_conf >= BUTTON_TYPE_THRESHOLD or (color_score >= RESULT_THRESHOLD and has_countdown):
+            print(f"    'ต่อไป' button detected (conf={next_conf:.3f}) - Wave {current_wave} completed!")
+            current_wave += 1
+            if current_wave <= 3:
+                print(f"    >>> Advancing to Wave {current_wave} (Auto combat enabled) <<<")
+            print("    Letting game countdown auto-advance to next wave (5s)...")
+            time.sleep(4.0)
+            continue
 
-        # 5. Clean periodic status log (every 15 seconds)
-        if elapsed % 15 == 0 and elapsed != last_printed:
-            auto_status = "ON (Yellow)" if yellow_val >= AUTO_YELLOW_THRESHOLD else ("OFF (Blue)" if blue_val >= AUTO_BLUE_THRESHOLD else "unknown")
-            print(f"    Battle ongoing... Elapsed: {elapsed}s | AUTO: {auto_status}")
-            last_printed = elapsed
+        # 5. Combat Action during Wave
+        blue_score = auto_blue_score(img)
+        yellow_score = auto_yellow_score(img)
+
+        if current_wave == 1:
+            # Wave 1: STRICTLY MANUAL COMBAT
+            # Check if AUTO is accidentally ON -> Turn it OFF
+            if yellow_score >= AUTO_YELLOW_THRESHOLD:
+                if time.time() - last_auto_tap >= 5:
+                    print(f"    [Wave 1 Rule] Auto is ON (yellow={yellow_score:.3f}) -> Tapping AUTO to turn OFF...")
+                    tap(AUTO[0], AUTO[1])
+                    last_auto_tap = time.time()
+                    time.sleep(0.5)
+
+            # Manually trigger skills in Wave 1: Red skill first, then Green skill
+            tap(SKILL_RED[0], SKILL_RED[1])
+            time.sleep(0.20)
+            tap(SKILL_GREEN[0], SKILL_GREEN[1])
+            time.sleep(0.20)
+
+            if elapsed - last_printed >= 5:
+                print(f"    [Wave 1 Manual] Fighting... Elapsed: {elapsed}s | Auto: OFF")
+                last_printed = elapsed
+
+        else:
+            # Wave 2 & Wave 3: AUTO COMBAT ALLOWED
+            if blue_score >= AUTO_BLUE_THRESHOLD:
+                if time.time() - last_auto_tap >= 8:
+                    print(f"    [Wave {current_wave}] AUTO is OFF (blue={blue_score:.3f}) -> Tapping AUTO (45, 240) to turn ON...")
+                    tap(AUTO[0], AUTO[1])
+                    last_auto_tap = time.time()
+                    time.sleep(1.0)
+            elif yellow_score >= AUTO_YELLOW_THRESHOLD:
+                if elapsed - last_printed >= 10:
+                    print(f"    [Wave {current_wave} Auto] In battle... Elapsed: {elapsed}s (Auto: ON)")
+                    last_printed = elapsed
 
         time.sleep(BATTLE_CHECK_INTERVAL)
 
 
 # ============================================================
-# DEBUG SCREENSHOT
-# ============================================================
-
-def save_debug_screenshot(prefix):
-    try:
-        os.makedirs(SCREENSHOT_DIR, exist_ok=True)
-        img = screenshot()
-        filename = os.path.join(
-            SCREENSHOT_DIR,
-            f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{prefix}.png"
-        )
-        cv2.imwrite(filename, img)
-        print(f"    Debug screenshot saved: {filename}")
-    except Exception as e:
-        print(f"    Screenshot error: {e}")
-
-
-# ============================================================
-# MAIN BOT LOOP
+# MAIN BOT RUNNER
 # ============================================================
 
 def run_bot():
     print()
     print("=" * 60)
-    print("      MONSTER SAGA - CHAMPION BOT (บอทแชมป์)")
+    print("MONSTER SAGA BOT - ศึกแชมเปี้ยน SEASON 2")
     print("=" * 60)
-    print()
     print(f"Device:     {DEVICE}")
-    print("Resolution: 1280x720 (240 DPI)")
-    print("Mode:       ศึกแชมเปี้ยน (จับคู่ 3 Wave / ฟาร์มต่อเนื่อง)")
+    print(f"ADB:        {ADB}")
+    print("Resolution: 1280x720 (Native)")
+    print("Mode:       ศึกแชมเปี้ยน Season 2 (Wave 1: 1ตัว Manual | Wave 2: 2ตัว Auto | Wave 3: 3ตัว Auto)")
     print()
     print("CTRL+C = STOP")
     print()
 
-    # Ensure ADB device is connected before entering match loop
     if not ensure_device_connected():
         print()
         print("=" * 60)
@@ -600,29 +634,23 @@ def run_bot():
             match_start_time = time.time()
             print()
             print("#" * 60)
-            print(f"MATCH #{match_count} (Started at {datetime.now().strftime('%H:%M:%S')})")
+            print(f"MATCH #{match_count} [Season 2] (Started at {datetime.now().strftime('%H:%M:%S')})")
             print("#" * 60)
 
-            # -------------------------------------------------
             # 1. MATCH_BUTTON (Lobby)
-            # -------------------------------------------------
             if not start_match():
                 print("Could not start match.")
                 time.sleep(2)
                 continue
 
-            # -------------------------------------------------
             # 2. MATCH_SEARCHING
-            # -------------------------------------------------
             if not wait_for_match_result():
                 print("Matchmaking failed.")
                 save_debug_screenshot("matchmaking_timeout")
                 continue
 
-            # -------------------------------------------------
             # 3. TEAM SELECTION (Waves 1, 2, 3)
-            # -------------------------------------------------
-            # Select team 1 -> tap NEXT -> Select team 2 -> tap NEXT -> Select team 3
+            # Season 2: Wave 1 selects 1, Wave 2 selects 2, Wave 3 selects 3
             select_team(1)
             select_team(2)
             select_team(3)
@@ -634,18 +662,14 @@ def run_bot():
             tap(BATTLE[0], BATTLE[1])
             time.sleep(2.0)
 
-            # -------------------------------------------------
-            # 4. BATTLE PHASE (Unified Battle Loop)
-            # -------------------------------------------------
+            # 4. BATTLE PHASE (Season 2 Loop)
             battle_success = run_battle_loop(match_start_time)
 
             if not battle_success:
                 print(f"MATCH #{match_count} encountered an error or timeout. Retrying next match...")
                 continue
 
-            # -------------------------------------------------
             # 5. MATCH COMPLETE -> LOOP
-            # -------------------------------------------------
             elapsed_match = int(time.time() - match_start_time)
             print()
             print(f"MATCH #{match_count} COMPLETE (Duration: {elapsed_match // 60}m {elapsed_match % 60}s)")

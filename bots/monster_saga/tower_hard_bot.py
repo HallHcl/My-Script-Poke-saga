@@ -16,7 +16,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 ADB = r"C:\Program Files\Netease\MuMuPlayer\nx_main\adb.exe"
 DEVICE = "127.0.0.1:5559"
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
 SCREENSHOT_DIR = BASE_DIR / "screenshots"
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 TPL_FLOOR_80 = BASE_DIR / "templates" / "badge_floor_80.png"
