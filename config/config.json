@@ -1,0 +1,59 @@
+{
+  "emulator": {
+    "adb_path": "C:\\Program Files\\Netease\\MuMuPlayer\\nx_main\\adb.exe",
+    "device": "127.0.0.1:5559",
+    "package_name": "com.monster.saga",
+    "resolution": [1280, 720],
+    "dpi": 240
+  },
+  "coordinates": {
+    "lobby": {
+      "match_button": [756, 662],
+      "tower_button": [150, 185],
+      "mailbox": [1210, 45],
+      "bag": [1140, 660]
+    },
+    "champion": {
+      "characters": [
+        [272, 654],
+        [382, 654],
+        [492, 654]
+      ],
+      "next_button": [941, 492],
+      "battle_button": [941, 492],
+      "auto_button": [56, 160],
+      "return_button": [635, 633]
+    },
+    "tower_hard": {
+      "tab_challenge": [150, 185],
+      "opponent": [707, 520],
+      "challenge_single": [638, 410],
+      "challenge_team": [638, 495],
+      "victory_next": [800, 630],
+      "buff_emblem": [706, 586],
+      "buff_cards_x": [304, 642, 980],
+      "buff_row_y": 531,
+      "buff_close": [1230, 43],
+      "buff_confirm_ok": [717, 411],
+      "chest_target": [707, 600],
+      "chest_dismiss": [500, 460],
+      "chest_leave": [430, 575]
+    }
+  },
+  "thresholds": {
+    "match": 0.90,
+    "button_type": 0.88,
+    "auto_yellow": 0.08,
+    "auto_blue": 0.25,
+    "result": 0.25,
+    "required_consecutive_frames": 2
+  },
+  "discord": {
+    "enabled": false,
+    "webhook_url": ""
+  },
+  "routine": {
+    "daily_reset_hour": 5,
+    "idle_sleep_seconds": 1800
+  }
+}

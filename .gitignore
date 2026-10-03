@@ -1,0 +1,18 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Temporary debug screenshots in root
+/*.png
+
+# Run-time screenshots & logs
+screenshots/
+tower_daily_done.txt
+*.log
+
+# Environments & Editor
+.vscode/
+.idea/
+venv/
+.env
