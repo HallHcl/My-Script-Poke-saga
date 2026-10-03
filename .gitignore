@@ -8,6 +8,7 @@ __pycache__/
 
 # Run-time screenshots & logs
 screenshots/
+debug/
 tower_daily_done.txt
 *.log
 
