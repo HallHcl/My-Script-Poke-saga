@@ -346,23 +346,13 @@ class SecretRealmBot:
                     self.adb.tap(x, y, jitter=False)
                     time.sleep(0.04)
 
-            time.sleep(0.15)
+            time.sleep(0.04)
 
             # กดปุ่มสีทอง "รวม"
             self.log("PHASE 2", f"กดปุ่มสีทอง 'รวม' ที่ {FUSION_CONFIRM_BTN}")
             self.adb.tap(*FUSION_CONFIRM_BTN)
             fusion_rounds += 1
             self.total_fusions += 1
-            time.sleep(0.4)
-
-            # เช็คทันทีหลังกดรวมว่ามีป๊อปอัปคำเตือนเด้งขึ้นมาบล็อกหรือไม่
-            post_img = self.adb.screencap()
-            if self.is_warning_dialog(post_img):
-                self.log("PHASE 2", ">> [BLOCK] เด้งป๊อปอัปคำเตือนสัตว์เลี้ยงผูกพันหลังกดรวม! สั่งกด 'ยกเลิก' ทันที <<")
-                self.adb.tap(*DIALOG_CANCEL_COORDS)
-                time.sleep(0.6)
-                break
-
             time.sleep(0.45)
 
         self.log("PHASE 2", f"รวมโปเกมอนเสร็จสิ้นในรอบนี้: {fusion_rounds} ชุด (สะสมทั้งหมด: {self.total_fusions})")
