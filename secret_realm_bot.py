@@ -59,6 +59,7 @@ from core.vision import Vision
 # Phase 1: Secret Realm Catching
 CATCH_AGAIN_COORDS = (752, 559)
 DIALOG_OK_COORDS = (647, 419)
+DIALOG_CANCEL_COORDS = (550, 395)       # ปุ่ม "ยกเลิก" บนป๊อปอัปคำเตือนสัตว์เลี้ยงผูกพัน (การ์เดียนเพท)
 CATCH_CLOSE_COORDS = (526, 563)
 TOP_RIGHT_CLOSE_X = (1240, 40)         # กากบาทมุมขวาบน (ทั้งในเขตลับ, หน้าฝึกซ้อม และหน้าโปเกมอน)
 HOME_BUTTON_COORDS = (1245, 80)        # ปุ่ม Home (กรณีติดหน้าผจญภัยแผนที่โลก)
@@ -115,10 +116,20 @@ class SecretRealmBot:
             return (match[0], match[1])
         return None
 
+    def is_warning_dialog(self, img) -> bool:
+        """ตรวจจับป๊อปอัปคำเตือนสัตว์เลี้ยงผูกพัน (ปุ่มยกเลิก / ป้ายคำเตือน)"""
+        if self.vision.match(img, "dialog_cancel_button.png", threshold=0.82):
+            return True
+        if self.vision.match(img, "dialog_warning_box.png", threshold=0.82):
+            return True
+        return False
+
     def is_guardian_pet_visible(self, img) -> bool:
-        """ตรวจจับป้ายข้อความ 'การ์เดียนเพท' เฉพาะในพื้นที่ตารางเลือกโปเกมอน 12 ช่อง (ROI)"""
-        # ROI ของตารางเลือกโปเกมอน: x: 740..1160, y: 400..680
-        match = self.vision.match(img, "guardian_pet_text.png", threshold=0.88, roi=(740, 400, 1160, 680))
+        """ตรวจจับป้ายข้อความ 'การ์เดียนเพท' เฉพาะในพื้นที่ตารางเลือกโปเกมอน 12 ช่อง (ROI) หรือเมื่อมีป๊อปอัปคำเตือน"""
+        if self.is_warning_dialog(img):
+            return True
+        # ROI ของตารางเลือกโปเกมอน: x: 740..1160, y: 360..680
+        match = self.vision.match(img, "guardian_pet_text.png", threshold=0.80, roi=(740, 360, 1160, 680))
         return match is not None
 
     def is_lobby(self, img) -> bool:
@@ -172,6 +183,12 @@ class SecretRealmBot:
             if self.is_lobby(img):
                 self.log("NAV", f"ถึงหน้า Lobby เรียบร้อยแล้ว (รอบที่ {i+1})")
                 return True
+            # ถ้ามีป๊อปอัปคำเตือนบล็อกอยู่ ให้กด "ยกเลิก" ทันที
+            if self.is_warning_dialog(img):
+                self.log("NAV", "ตรวจพบป๊อปอัปคำเตือนบล็อกหน้าจอ กดปุ่ม 'ยกเลิก'...")
+                self.adb.tap(*DIALOG_CANCEL_COORDS)
+                time.sleep(0.8)
+                continue
             # ถ้ามีปุ่ม Home บนแผนที่โลก
             if self.vision.match(img, "world_map_home.png", threshold=0.82):
                 self.log("NAV", "ตรวจพบหน้าต่างแผนที่โลก กดปุ่ม Home เพื่อกลับ Lobby...")
@@ -302,14 +319,21 @@ class SecretRealmBot:
         while fusion_rounds < max_fusion_rounds:
             img = self.adb.screencap()
 
-            # ป้องกันกรณีมีป๊อปอัปแจ้งเตือนแทรกซ้อน (เช่น เผลอโดนการ์เดียนเพท)
+            # 1. ตรวจสอบป๊อปอัปคำเตือนสัตว์เลี้ยงผูกพัน (บล็อกทันที: กด 'ยกเลิก' เพื่อไม่ให้สูญเสียสัตว์เลี้ยง)
+            if self.is_warning_dialog(img):
+                self.log("PHASE 2", ">> [BLOCK] ตรวจพบป๊อปอัปคำเตือนสัตว์เลี้ยงผูกพัน! กด 'ยกเลิก' ทันทีและหยุดการรวม <<")
+                self.adb.tap(*DIALOG_CANCEL_COORDS)
+                time.sleep(0.6)
+                break
+
+            # 2. ป้องกันกรณีมีป๊อปอัปแจ้งเตือนกระเป๋าเต็ม
             if self.is_bag_full_dialog(img):
                 self.log("PHASE 2", ">> ตรวจพบป๊อปอัปแจ้งเตือนในหน้าเลือกโปเกมอน กดตกลงและหยุดการรวมทันที <<")
                 self.adb.tap(*DIALOG_OK_COORDS)
                 time.sleep(0.8)
                 break
 
-            # ตรวจสอบการ์เดียนเพท
+            # 3. ตรวจสอบการ์เดียนเพท
             if self.is_guardian_pet_visible(img):
                 self.log("PHASE 2", ">> ตรวจพบ 'การ์เดียนเพท' ในรายการแล้ว! หยุดการรวมโปเกมอนทันที <<")
                 break
@@ -329,7 +353,17 @@ class SecretRealmBot:
             self.adb.tap(*FUSION_CONFIRM_BTN)
             fusion_rounds += 1
             self.total_fusions += 1
-            time.sleep(0.85)
+            time.sleep(0.4)
+
+            # เช็คทันทีหลังกดรวมว่ามีป๊อปอัปคำเตือนเด้งขึ้นมาบล็อกหรือไม่
+            post_img = self.adb.screencap()
+            if self.is_warning_dialog(post_img):
+                self.log("PHASE 2", ">> [BLOCK] เด้งป๊อปอัปคำเตือนสัตว์เลี้ยงผูกพันหลังกดรวม! สั่งกด 'ยกเลิก' ทันที <<")
+                self.adb.tap(*DIALOG_CANCEL_COORDS)
+                time.sleep(0.6)
+                break
+
+            time.sleep(0.45)
 
         self.log("PHASE 2", f"รวมโปเกมอนเสร็จสิ้นในรอบนี้: {fusion_rounds} ชุด (สะสมทั้งหมด: {self.total_fusions})")
 
